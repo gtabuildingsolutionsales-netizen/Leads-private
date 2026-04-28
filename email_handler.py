@@ -84,18 +84,47 @@ def _decode(raw: bytes | str) -> str:
     return "".join(out)
 
 
-def _extract_plaintext(msg: email.message.Message) -> str:
-    """Pull the text/plain body out of a (possibly multipart) message."""
+_TAG_RE = re.compile(r"<[^>]+>")
+_HTML_BREAK_RE = re.compile(r"</(p|div|br|tr|li)\s*>", re.IGNORECASE)
+
+
+def _html_to_text(html: str) -> str:
+    """Crude but dependency-free HTML stripping for emails that lack text/plain."""
+    text = _HTML_BREAK_RE.sub("\n", html)
+    text = _TAG_RE.sub("", text)
+    text = text.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"')
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+def _extract_body(msg: email.message.Message) -> str:
+    """
+    Prefer text/plain; fall back to text/html (tags stripped) if that's all
+    the sender shipped. Skip attachments.
+    """
+    plain, html = "", ""
     if msg.is_multipart():
         for part in msg.walk():
-            if part.get_content_type() == "text/plain" and "attachment" not in str(part.get("Content-Disposition", "")):
-                payload = part.get_payload(decode=True) or b""
-                charset = part.get_content_charset() or "utf-8"
-                return payload.decode(charset, errors="replace")
-        return ""
-    payload = msg.get_payload(decode=True) or b""
-    charset = msg.get_content_charset() or "utf-8"
-    return payload.decode(charset, errors="replace")
+            disposition = str(part.get("Content-Disposition", ""))
+            if "attachment" in disposition:
+                continue
+            ctype = part.get_content_type()
+            payload = part.get_payload(decode=True) or b""
+            charset = part.get_content_charset() or "utf-8"
+            decoded = payload.decode(charset, errors="replace")
+            if ctype == "text/plain" and not plain:
+                plain = decoded
+            elif ctype == "text/html" and not html:
+                html = decoded
+    else:
+        payload = msg.get_payload(decode=True) or b""
+        charset = msg.get_content_charset() or "utf-8"
+        decoded = payload.decode(charset, errors="replace")
+        if msg.get_content_type() == "text/html":
+            html = decoded
+        else:
+            plain = decoded
+
+    return plain if plain else _html_to_text(html)
 
 
 def get_unread_replies() -> list[dict]:
@@ -124,7 +153,7 @@ def get_unread_replies() -> list[dict]:
                 raw = msg_data[0][1]
                 msg = email.message_from_bytes(raw)
                 _, from_email = parseaddr(msg.get("From", ""))
-                body = _extract_plaintext(msg)
+                body = _extract_body(msg)
                 replies.append({
                     "from_email": from_email.lower(),
                     "subject": _decode(msg.get("Subject", "")),

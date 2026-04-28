@@ -95,6 +95,11 @@ def process_replies() -> None:
                 print(f"[main] Reply from unknown sender {sender} — ignoring")
                 continue
 
+            if not reply["clean_body"].strip():
+                print(f"[main] Empty reply body from {sender} — alerting human")
+                alert_human(lead, {"reason": "Empty body after clutter strip"}, reply["body"])
+                continue
+
             verdict = ai_agent.evaluate_reply(reply["clean_body"])
             classification = verdict.get("classification")
             print(f"[main] {sender} -> {classification}")

@@ -5,9 +5,11 @@ Two responsibilities:
   1. Triage replies with cheap Haiku and return a structured classification.
   2. Draft outbound emails (icebreaker + 45-day revival) with Sonnet.
 
-System prompts are cached so we pay full price once and ~10% on every
-subsequent call within the 5-minute window. The triage system prompt is
-short and may not hit the cache minimum on Haiku — that's fine, no error.
+The system prompts are short (~75-100 tokens) — well under the cache-write
+minimums (4096 for Haiku 4.5, 2048 for Sonnet 4.6). The cache_control
+markers are present for forward-compatibility: the moment a prompt grows
+past the threshold, caching kicks in automatically. Today they're a no-op
+(silently — the API does not error on too-short prefixes).
 """
 
 import json
@@ -86,7 +88,7 @@ def evaluate_reply(email_text: str) -> dict:
 # Drafting — Sonnet
 # ---------------------------------------------------------------------------
 
-def _draft(system_prompt: str, user_prompt: str, max_tokens: int = 600) -> str:
+def _draft(system_prompt: str, user_prompt: str, max_tokens: int = 1024) -> str:
     """Shared Sonnet drafter with cached system prompt."""
     resp = _get_client().messages.create(
         model=config.DRAFTING_MODEL,
@@ -141,4 +143,4 @@ def draft_revival_email(lead_data: dict) -> str:
         f"Write the 45-day check-in to a contact at {company}. "
         "Two sentences exactly. Output only the email body."
     )
-    return _draft(config.REVIVAL_SYSTEM_PROMPT, user_prompt, max_tokens=200)
+    return _draft(config.REVIVAL_SYSTEM_PROMPT, user_prompt, max_tokens=400)
